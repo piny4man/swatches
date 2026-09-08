@@ -85,6 +85,9 @@ Crabture layout measurement, paint and hit-testing must use the same resolved fo
 
 ## Development
 
+See [Private integration strategy](docs/private-integration.md) for the private
+patch workflow and the independent consumer that proves local path builds.
+
 ```sh
 cargo fmt --check
 cargo test --locked

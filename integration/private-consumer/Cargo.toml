@@ -1,0 +1,11 @@
+[package]
+name = "blueprint-private-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# A separate consumer, not part of the library's dependency graph.
+[workspace]
+
+[dependencies]
+blueprint = { package = "blueprint-theme", path = "../.." }
