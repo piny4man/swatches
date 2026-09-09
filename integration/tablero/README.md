@@ -70,7 +70,9 @@ Tooltip and locally rendered tray menus receive each output's resolved render se
 
 Existing popup opacity rules remain: a transparent bar uses the opaque fallback background; otherwise popup alpha is at least `0xF0`. Bar background overrides therefore affect popups too. External tray-owned windows/context menus and supplied tray icon artwork are not recolored by Tablero. Attention/disabled/hover colors follow the existing application rules described above.
 
-### Desktop checks still required before merge
+### Desktop review checklist
+
+The live review below covers the requested font/scaling/popup/recovery/replay checks. Keep this checklist for subsequent theme or compositor changes; explicit override precedence is covered by automated tests.
 
 1. Run the private build with opt-in and test actual font availability/readability.
 2. Edit only the shared theme's background/foreground/accent/font; confirm all intended outputs update, including 1x and scaled monitors, while explicit overrides remain.
@@ -89,7 +91,47 @@ Existing popup opacity rules remain: a transparent bar uses the opaque fallback 
 - Separate unpatched public clone at the same SHA: locked offline build passed; tracked files remained clean. Original `/home/piny4/dev/tablero` remains clean on `main`.
 - Environment: Rust 1.98.1; pkg-config versions Wayland 1.26.0, PipeWire 1.6.8, libudev 261, xkbcommon 1.13.2.
 
-Automated renderer/config tests do not substitute for the live Wayland/desktop checks above. No running desktop configuration was changed, no installation was performed, and no live GUI verification is claimed.
+This initial automated validation was followed by the live review below. No installed desktop configuration was changed and no installation was performed.
+
+## Live desktop review and stronger snapshot coverage — 9 September 2026
+
+Reviewed in Hyprland 0.56.2 on `DP-5` (2560×1440, scale 1) and `eDP-2` (2560×1600, scale 1.3333334). A temporary second bar used its own config/theme under ignored `.work/desktop-review/`; the original bar stayed running with its config untouched. The temporary bar was stopped after inspection and its layer surfaces were verified absent.
+
+The review driver `desktop-check.rs` emits workspaces, a distinct title per monitor, and volume 73% exactly once, then finishes that producer. The real SNI producer supplies tray items. Consequently the title/volume visible after reload cannot have come from recurring producer updates. This uses the app's real Wayland render, reload, popup and command paths, rather than simulating the UI in a unit test.
+
+| Check | Observed result |
+| --- | --- |
+| Font-only change | Noto Sans Mono → Noto Serif visibly updated both bars. Returning to Mono restored title/volume text pixels to the baseline. DejaVu family requests resolved to Noto on this machine, so the review used the installed family names explicitly. |
+| Scaled output | Both bars stayed at 44 logical pixels; title/volume text and tooltip/tray menus rendered at 1× and fractional scale without observed clipping or incorrect pointer targeting. |
+| Invalid theme/app save | Parse warnings were logged and producer-text pixels stayed identical to the last valid frame on both outputs. Valid color/font saves recovered without restarting. |
+| Missing selected theme | Selecting a nonexistent theme retained the last valid bar. Creating that file alone applied it and restored Mono, without a second config edit. |
+| Tooltip | Hovering the test power widget opened the expected text on both outputs. After a font change it reopened with the new font and updated measurements. |
+| Tray menu | A real exported SNI menu opened with a right click on both monitors. The first row received the hover cursor. Invalid theme/app saves preserved the open menu's interior pixels; a changed valid config closed it; reopening showed the new font. No real application menu action was activated. |
+| Content after reload | Monitor-specific titles, workspace buttons and volume 73% remained visible after font/color changes, invalid saves and recovery, with the one-shot producer already finished. |
+
+Screenshots were inspected locally. Pixel comparisons used text/menu interiors, excluding compositor-rounded surface edges that can include unrelated desktop pixels. Local evidence and logs remain in ignored `.work/desktop-review/`; screenshots containing surrounding desktop content are not committed. Pointer automation used a temporary Wayland virtual-pointer client. An earlier `hyprctl` shortcut attempt did not deliver a tray click; the successful native-pointer run is the basis for the tray results above. External tray-owned windows, every installed font and other compositor/display combinations are outside this review.
+
+The strengthened `theme_reload_replays_latest_producers_into_rebuilt_dashboards` test now:
+
+- seeds superseded and latest monitor-specific titles, plus superseded and latest volume readings;
+- builds scoped dashboards for both monitors with title and volume actually enabled;
+- confirms fresh widgets consume those readings while replayed widgets already contain the latest values;
+- checks each monitor's workspace interaction independently;
+- clears each restored title/volume and asserts that rendered pixels change, then restores it and asserts an exact frame match, for both tested theme accents.
+
+This is a coverage improvement; it did not establish a production snapshot bug. The focused test, all-target Clippy with warnings denied, and formatting checks passed after the change.
+
+### Repeat the one-shot desktop review
+
+From the Blueprint root after preparing the private Tablero checkout:
+
+```sh
+install -m644 integration/tablero/desktop-check.rs .work/tablero/crates/tablero/examples/blueprint_desktop_check.rs
+cargo build --locked --manifest-path .work/tablero/Cargo.toml -p tablero --example blueprint_desktop_check
+RUST_LOG=warn,tablero=debug .work/tablero/target/debug/examples/blueprint_desktop_check /absolute/path/to/review/config.toml eDP-2 DP-5
+```
+
+Substitute the actual connector names. Use an isolated opt-in config with `modules-left = ["workspaces"]`, `modules-center = ["title"]`, and `modules-right = ["volume", "tray", "power"]` in `[bar]`, plus an installed font family in the theme. Edit only the review config/theme while the process runs; stop the review process afterward. The driver is an optional review example, not part of the application adapter patch.
 
 ## Refreshing the private patch
 
