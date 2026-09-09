@@ -55,7 +55,7 @@ For each app, store `integration/<app>/base-revision`, `adapter.patch` and `READ
 
 Validate `git apply --check` and a locked build from a fresh checkout. Compare upstream diffs on base-version updates and deliberately regenerate the patch; do not apply with automatic conflict guessing. Record native library requirements separately. Do not commit `.work/`, build caches, generated binaries or local credentials.
 
-These three app integration records do not exist yet: NUKE-72, NUKE-73 and NUKE-74 will create them. NUKE-71 proves the dependency/build arrangement with the separate consumer below, not the app adapters.
+The [Tablero integration](../integration/tablero/README.md) is supplied by NUKE-72. Hyprburst and Crabture records will be created by NUKE-73 and NUKE-74. NUKE-71 proves the dependency/build arrangement with the separate consumer below, not the app adapters.
 
 ## Executable proof
 

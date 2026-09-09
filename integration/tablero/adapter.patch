@@ -1,0 +1,840 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 45b865f..b246757 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -131,6 +131,14 @@ version = "2.13.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
+ 
++[[package]]
++name = "blueprint-theme"
++version = "0.1.0"
++dependencies = [
++ "serde",
++ "toml 0.8.23",
++]
++
+ [[package]]
+ name = "bumpalo"
+ version = "3.20.3"
+@@ -1385,6 +1393,7 @@ dependencies = [
+ name = "tablero"
+ version = "0.4.0"
+ dependencies = [
++ "blueprint-theme",
+  "calloop",
+  "calloop-wayland-source",
+  "chrono",
+diff --git a/crates/tablero/Cargo.toml b/crates/tablero/Cargo.toml
+index 67d6982..73a6539 100644
+--- a/crates/tablero/Cargo.toml
++++ b/crates/tablero/Cargo.toml
+@@ -10,10 +10,11 @@ homepage = "https://github.com/piny4man/tablero"
+ readme = "../../README.md"
+ keywords = ["wayland", "hyprland", "status-bar", "desktop", "linux"]
+ categories = ["gui", "visualization"]
+-publish = ["crates-io"]
++publish = false
+ include = ["src/**", "tests/**", "examples/**", "config.example.toml", "LICENSE"]
+ 
+ [dependencies]
++blueprint = { package = "blueprint-theme", path = "../../../.." }
+ # default-features = false drops the regex filter engine, the `jiff` datetime
+ # stack, and anstream/anstyle coloring — none of which a plain `env_logger::init()`
+ # needs. RUST_LOG level/module filtering still works.
+diff --git a/crates/tablero/src/config.rs b/crates/tablero/src/config.rs
+index 7f689f1..92b83af 100644
+--- a/crates/tablero/src/config.rs
++++ b/crates/tablero/src/config.rs
+@@ -801,6 +801,8 @@ pub struct MonitorConfig {
+ #[derive(Debug, Clone, PartialEq, Deserialize)]
+ #[serde(default, deny_unknown_fields)]
+ pub struct Config {
++    /// Optional private Blueprint theme, resolved before default filling.
++    pub appearance: AppearanceConfig,
+     /// Bar height in pixels.
+     pub height: u32,
+     /// Color theme.
+@@ -819,6 +821,7 @@ pub struct Config {
+ impl Default for Config {
+     fn default() -> Self {
+         Self {
++            appearance: AppearanceConfig::default(),
+             height: DEFAULT_HEIGHT,
+             theme: Theme::default(),
+             font: Font::default(),
+@@ -829,6 +832,25 @@ impl Default for Config {
+     }
+ }
+ 
++#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
++#[serde(default, deny_unknown_fields)]
++pub struct AppearanceConfig {
++    pub theme_file: Option<String>,
++}
++
++pub(crate) fn resolve_theme_file(value: &str, config_path: &Path) -> Result<PathBuf, String> {
++    let absolute = std::path::absolute(config_path).map_err(|e| e.to_string())?;
++    let home = std::env::var_os("HOME").map(PathBuf::from);
++    blueprint::resolve_theme_path(
++        value,
++        absolute
++            .parent()
++            .expect("absolute config path has a parent"),
++        home.as_deref(),
++    )
++    .map_err(|e| e.to_string())
++}
++
+ /// Resolve the user config path from the environment.
+ ///
+ /// Prefers `$XDG_CONFIG_HOME/tablero/config.toml`; falls back to
+@@ -859,14 +881,10 @@ impl Config {
+     ///
+     /// Missing fields fall back to their documented defaults; unknown keys,
+     /// unknown widget names, and malformed colors are reported as errors.
++    /// A selected Blueprint theme requires [`Self::load_from_path`] so relative
++    /// paths have an explicit config-directory base.
+     pub fn from_toml_str(toml: &str) -> Result<Config, ConfigError> {
+-        let config: Config =
+-            toml::from_str(toml).map_err(|source| ConfigError::Parse { path: None, source })?;
+-        config.validate().map_err(|message| ConfigError::Invalid {
+-            path: None,
+-            message,
+-        })?;
+-        Ok(config)
++        Self::parse_text(None, toml)
+     }
+ 
+     /// Load a configuration from a TOML file.
+@@ -909,12 +927,55 @@ impl Config {
+     }
+ 
+     fn parse_file_text(path: &Path, text: &str) -> Result<Config, ConfigError> {
+-        let config: Config = toml::from_str(text).map_err(|source| ConfigError::Parse {
+-            path: Some(path.to_path_buf()),
++        Self::parse_text(Some(path), text)
++    }
++
++    fn parse_text(path: Option<&Path>, text: &str) -> Result<Config, ConfigError> {
++        let parse_error = |source| ConfigError::Parse {
++            path: path.map(Path::to_path_buf),
+             source,
+-        })?;
++        };
++        let invalid = |message| ConfigError::Invalid {
++            path: path.map(Path::to_path_buf),
++            message,
++        };
++        let mut raw: toml::Table = toml::from_str(text).map_err(parse_error)?;
++        let appearance: AppearanceConfig = raw
++            .get("appearance")
++            .cloned()
++            .map(toml::Value::try_into)
++            .transpose()
++            .map_err(parse_error)?
++            .unwrap_or_default();
++        if let Some(value) = &appearance.theme_file {
++            let path = path.ok_or_else(|| {
++                invalid(
++                    "appearance.theme_file requires a config file path; use load_from_path".into(),
++                )
++            })?;
++            let theme_path = resolve_theme_file(value, path).map_err(&invalid)?;
++            let theme =
++                blueprint::Theme::load(theme_path).map_err(|error| invalid(error.to_string()))?;
++            // Insert only absent keys in the raw document. Explicit values,
++            // including old defaults and RGBA overrides, remain authoritative.
++            for (table, key, value) in [
++                ("theme", "background", theme.colors().background.to_string()),
++                ("theme", "foreground", theme.colors().foreground.to_string()),
++                ("theme", "accent", theme.colors().accent.to_string()),
++                ("font", "family", theme.font().family.as_str().to_owned()),
++            ] {
++                let entry = raw
++                    .entry(table)
++                    .or_insert_with(|| toml::Value::Table(toml::Table::new()));
++                let table = entry
++                    .as_table_mut()
++                    .ok_or_else(|| invalid(format!("{table} must be a table")))?;
++                table.entry(key).or_insert(toml::Value::String(value));
++            }
++        }
++        let config: Config = toml::Value::Table(raw).try_into().map_err(parse_error)?;
+         config.validate().map_err(|message| ConfigError::Invalid {
+-            path: Some(path.to_path_buf()),
++            path: path.map(Path::to_path_buf),
+             message,
+         })?;
+         Ok(config)
+diff --git a/crates/tablero/src/config_reload.rs b/crates/tablero/src/config_reload.rs
+new file mode 100644
+index 0000000..7a713bf
+--- /dev/null
++++ b/crates/tablero/src/config_reload.rs
+@@ -0,0 +1,260 @@
++//! Poll both the app document and selected theme, including a failed candidate's
++//! dependency. Directory/inode changes and same-mtime saves are observed on Linux.
++use std::{
++    fs,
++    os::unix::fs::MetadataExt,
++    path::{Path, PathBuf},
++    time::{Duration, Instant},
++};
++
++use crate::config::{Config, ConfigError, resolve_theme_file};
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++struct Stamp(Option<(u64, u64, u64, i64, i64, i64, i64)>);
++
++fn stamp(path: &Path) -> Stamp {
++    Stamp(fs::metadata(path).ok().map(|m| {
++        (
++            m.dev(),
++            m.ino(),
++            m.len(),
++            m.mtime(),
++            m.mtime_nsec(),
++            m.ctime(),
++            m.ctime_nsec(),
++        )
++    }))
++}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++struct Snapshot {
++    config: Stamp,
++    themes: Vec<(PathBuf, Stamp)>,
++}
++
++pub(crate) struct ConfigWatcher {
++    path: PathBuf,
++    active_theme: Option<PathBuf>,
++    candidate_theme: Option<PathBuf>,
++    scanned: Option<Stamp>,
++    observed: Option<Snapshot>,
++    pending: Option<(Snapshot, Instant)>,
++}
++
++impl ConfigWatcher {
++    pub(crate) fn new(path: PathBuf, active: &Config) -> Self {
++        let active_theme = active
++            .appearance
++            .theme_file
++            .as_deref()
++            .and_then(|value| resolve_theme_file(value, &path).ok());
++        Self {
++            path,
++            active_theme,
++            candidate_theme: None,
++            scanned: None,
++            observed: None,
++            pending: None,
++        }
++        // First poll validates the on-disk state too: edits between initial
++        // loading and event-loop startup must not be silently marked applied.
++    }
++
++    fn snapshot(&mut self) -> Snapshot {
++        let config = stamp(&self.path);
++        if self.scanned.as_ref() != Some(&config) {
++            self.candidate_theme = fs::read_to_string(&self.path)
++                .ok()
++                .and_then(|text| text.parse::<toml::Table>().ok())
++                .and_then(|raw| {
++                    raw.get("appearance")?
++                        .get("theme_file")?
++                        .as_str()
++                        .map(str::to_owned)
++                })
++                .and_then(|value| resolve_theme_file(&value, &self.path).ok());
++            self.scanned = Some(config.clone());
++        }
++        let mut paths: Vec<_> = self
++            .active_theme
++            .iter()
++            .chain(self.candidate_theme.iter())
++            .cloned()
++            .collect();
++        paths.sort();
++        paths.dedup();
++        Snapshot {
++            config,
++            themes: paths
++                .into_iter()
++                .map(|path| {
++                    let state = stamp(&path);
++                    (path, state)
++                })
++                .collect(),
++        }
++    }
++
++    /// Returns a fully validated candidate only after a stable 400ms interval.
++    /// The caller replaces UI state only on Ok; errors are emitted once per edit.
++    pub(crate) fn poll(&mut self, now: Instant) -> Option<Result<Config, ConfigError>> {
++        let snapshot = self.snapshot();
++        if self.observed.as_ref() == Some(&snapshot) {
++            self.pending = None;
++            return None;
++        }
++        match &self.pending {
++            Some((pending, since)) if pending == &snapshot => {
++                if now.duration_since(*since) < Duration::from_millis(400) {
++                    return None;
++                }
++            }
++            _ => {
++                self.pending = Some((snapshot, now));
++                return None;
++            }
++        }
++        let candidate = Config::load_for_reload(&self.path);
++        // Do not accept a mixed read if either file changed during validation.
++        if self.snapshot() != snapshot {
++            self.pending = None;
++            return None;
++        }
++        if let Ok(config) = &candidate {
++            self.active_theme = config
++                .appearance
++                .theme_file
++                .as_deref()
++                .and_then(|value| resolve_theme_file(value, &self.path).ok());
++        }
++        // Preserve the stamps that were actually validated. Only discard the
++        // former active dependency after a successful switch.
++        let mut observed = snapshot;
++        observed.themes.retain(|(path, _)| {
++            Some(path) == self.active_theme.as_ref() || Some(path) == self.candidate_theme.as_ref()
++        });
++        self.observed = Some(observed);
++        self.pending = None;
++        Some(candidate)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    const THEME: &str = include_str!("../tests/fixtures/blueprint.toml");
++
++    fn settled(watcher: &mut ConfigWatcher, now: &mut Instant) -> Result<Config, ConfigError> {
++        *now += Duration::from_secs(1);
++        assert!(watcher.poll(*now).is_none());
++        assert!(watcher.poll(*now + Duration::from_millis(399)).is_none());
++        watcher
++            .poll(*now + Duration::from_millis(400))
++            .expect("candidate after settling")
++    }
++
++    #[test]
++    fn theme_only_edits_replacements_and_invalid_saves_recover() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("config.toml");
++        let theme = dir.path().join("theme.toml");
++        fs::write(&path, "[appearance]\ntheme_file = 'theme.toml'").unwrap();
++        fs::write(&theme, THEME).unwrap();
++        let mut active = Config::load_from_path(&path).unwrap();
++        let mut watcher = ConfigWatcher::new(path.clone(), &active);
++        let mut now = Instant::now();
++        assert_eq!(settled(&mut watcher, &mut now).unwrap(), active);
++        let replacement = dir.path().join("replacement");
++        fs::write(&replacement, THEME.replace("#80D4FF", "#010203")).unwrap();
++        fs::rename(&replacement, &theme).unwrap();
++        active = settled(&mut watcher, &mut now).unwrap();
++        assert_eq!(active.theme.accent.to_rgba(), (1, 2, 3, 255));
++        for bad in ["", "version = 999", "incomplete ="] {
++            fs::write(&theme, bad).unwrap();
++            assert!(settled(&mut watcher, &mut now).is_err());
++            assert_eq!(active.theme.accent.to_rgba(), (1, 2, 3, 255));
++            now += Duration::from_secs(1);
++            assert!(
++                watcher.poll(now).is_none(),
++                "no repeated error until an edit"
++            );
++        }
++        fs::remove_file(&theme).unwrap();
++        assert!(settled(&mut watcher, &mut now).is_err());
++        fs::write(&theme, THEME).unwrap();
++        active = settled(&mut watcher, &mut now).unwrap();
++        assert_eq!(active.theme.accent.to_rgba(), (128, 212, 255, 255));
++        fs::write(&path, "").unwrap();
++        assert!(settled(&mut watcher, &mut now).is_err());
++        fs::remove_file(&path).unwrap();
++        assert!(settled(&mut watcher, &mut now).is_err());
++        fs::write(&path, "height = 30").unwrap();
++        active = settled(&mut watcher, &mut now).unwrap();
++        assert_eq!(active.theme, Config::default().theme);
++        fs::write(&theme, "no longer selected").unwrap();
++        now += Duration::from_secs(1);
++        assert!(watcher.poll(now).is_none());
++    }
++
++    #[test]
++    fn failed_switch_recovers_when_only_new_theme_is_created() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("config.toml");
++        fs::write(&path, "height = 30").unwrap();
++        let active = Config::load_from_path(&path).unwrap();
++        let mut watcher = ConfigWatcher::new(path.clone(), &active);
++        let mut now = Instant::now();
++        settled(&mut watcher, &mut now).unwrap();
++        fs::write(&path, "[appearance]\ntheme_file = 'new/theme.toml'").unwrap();
++        assert!(settled(&mut watcher, &mut now).is_err());
++        fs::create_dir(dir.path().join("new")).unwrap();
++        fs::write(dir.path().join("new/theme.toml"), THEME).unwrap();
++        assert_eq!(
++            settled(&mut watcher, &mut now)
++                .unwrap()
++                .theme
++                .accent
++                .to_rgba(),
++            (128, 212, 255, 255)
++        );
++    }
++
++    #[test]
++    fn symlink_retarget_and_same_mtime_saves_are_seen() {
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("config.toml");
++        let theme = dir.path().join("theme.toml");
++        let target = dir.path().join("target.toml");
++        fs::write(&path, "[appearance]\ntheme_file = 'theme.toml'").unwrap();
++        fs::write(&target, THEME).unwrap();
++        std::os::unix::fs::symlink(&target, &theme).unwrap();
++        let active = Config::load_from_path(&path).unwrap();
++        let mut watcher = ConfigWatcher::new(path, &active);
++        let mut now = Instant::now();
++        settled(&mut watcher, &mut now).unwrap();
++        let mtime = fs::metadata(&target).unwrap().modified().unwrap();
++        fs::write(&target, THEME.replace("#80D4FF", "#020304")).unwrap();
++        fs::File::options()
++            .write(true)
++            .open(&target)
++            .unwrap()
++            .set_modified(mtime)
++            .unwrap();
++        assert_eq!(
++            settled(&mut watcher, &mut now)
++                .unwrap()
++                .theme
++                .accent
++                .to_rgba(),
++            (2, 3, 4, 255)
++        );
++        let other = dir.path().join("other.toml");
++        fs::write(&other, THEME).unwrap();
++        fs::remove_file(&theme).unwrap();
++        std::os::unix::fs::symlink(other, theme).unwrap();
++        assert_eq!(
++            settled(&mut watcher, &mut now).unwrap().theme.accent,
++            active.theme.accent
++        );
++    }
++}
+diff --git a/crates/tablero/src/lib.rs b/crates/tablero/src/lib.rs
+index 26162b0..4dc02d7 100644
+--- a/crates/tablero/src/lib.rs
++++ b/crates/tablero/src/lib.rs
+@@ -17,6 +17,7 @@
+ pub mod blit;
+ pub mod clock;
+ pub mod config;
++mod config_reload;
+ pub mod icon;
+ pub mod render;
+ pub mod scale;
+@@ -39,8 +40,8 @@ pub mod upower;
+ pub mod volume;
+ 
+ use std::error::Error;
+-use std::path::{Path, PathBuf};
+-use std::time::{Duration, Instant, SystemTime};
++use std::path::PathBuf;
++use std::time::{Duration, Instant};
+ 
+ use crate::blit::write_argb8888;
+ use crate::clock::millis_until_next_minute;
+@@ -255,10 +256,7 @@ impl Surface {
+             .set_settings(self.config.scaled_render_settings(self.scale));
+         // Rebuild clears widget state; replay the last producer snapshots and
+         // a fresh clock tick so the bar does not go empty until the next event.
+-        for msg in seed {
+-            let _ = self.dashboard.update(msg);
+-        }
+-        let _ = self.dashboard.update(&Msg::tick_now());
++        replay_snapshot(&mut self.dashboard, seed);
+         if self.configured {
+             self.draw(pool);
+         }
+@@ -834,14 +832,8 @@ struct App {
+     tray_menu: Option<TrayMenuSurface>,
+     /// Process-wide font set shared by every surface and popup.
+     fonts: SharedFonts,
+-    /// Optional path watched for config hot-reload.
+-    config_path: Option<PathBuf>,
+-    /// Last successfully applied mtime of `config_path` (or `None` if missing).
+-    config_mtime: Option<SystemTime>,
+-    /// mtime we are debouncing before applying (editor mid-save).
+-    config_pending_mtime: Option<SystemTime>,
+-    /// When `config_pending_mtime` was first observed.
+-    config_pending_at: Option<Instant>,
++    /// Watches app config and active/candidate theme dependencies.
++    config_watcher: Option<config_reload::ConfigWatcher>,
+     /// Latest producer messages, replayed after a dashboard rebuild on reload.
+     producer_snapshot: ProducerSnapshot,
+     exit: bool,
+@@ -857,6 +849,13 @@ struct ProducerSnapshot {
+     messages: Vec<Msg>,
+ }
+ 
++fn replay_snapshot(dashboard: &mut Dashboard, seed: &[Msg]) {
++    for msg in seed {
++        let _ = dashboard.update(msg);
++    }
++    let _ = dashboard.update(&Msg::tick_now());
++}
++
+ impl ProducerSnapshot {
+     fn note(&mut self, msg: &Msg) {
+         if matches!(
+@@ -970,47 +969,20 @@ impl App {
+         info!("config reloaded");
+     }
+ 
+-    /// Poll the config file mtime and reload when it changes.
++    /// Poll app/theme dependencies and apply only fully validated candidates.
+     ///
+     /// Debounces ~400ms so editors that truncate-then-write do not apply an
+     /// empty mid-save document (which would parse as defaults and wipe the bar).
+     fn poll_config_reload(&mut self) {
+-        let Some(path) = self.config_path.clone() else {
+-            return;
+-        };
+-        let mtime = file_mtime(&path);
+-        if mtime == self.config_mtime {
+-            self.config_pending_mtime = None;
+-            self.config_pending_at = None;
+-            return;
+-        }
+-
+-        // New or updated mtime: (re)start the settle timer.
+-        if self.config_pending_mtime != mtime {
+-            self.config_pending_mtime = mtime;
+-            self.config_pending_at = Some(Instant::now());
+-            return;
+-        }
+-        let Some(started) = self.config_pending_at else {
+-            return;
+-        };
+-        if started.elapsed() < Duration::from_millis(400) {
+-            return;
+-        }
+-
+-        match Config::load_for_reload(&path) {
+-            Ok(config) => {
+-                self.config_mtime = mtime;
+-                self.config_pending_mtime = None;
+-                self.config_pending_at = None;
+-                self.reload_config(config);
+-            }
+-            Err(error) => {
+-                warn!("config reload ignored: {error}");
+-                // Stop retrying this mtime until the user saves again.
+-                self.config_mtime = mtime;
+-                self.config_pending_mtime = None;
+-                self.config_pending_at = None;
++        if let Some(candidate) = self
++            .config_watcher
++            .as_mut()
++            .and_then(|watcher| watcher.poll(Instant::now()))
++        {
++            match candidate {
++                Ok(config) if &config != self.outputs.base() => self.reload_config(config),
++                Ok(_) => {}
++                Err(error) => warn!("config reload ignored: {error}"),
+             }
+         }
+     }
+@@ -1274,11 +1246,6 @@ impl App {
+     }
+ }
+ 
+-/// mtime of `path`, or `None` if the file is missing or unstatable.
+-fn file_mtime(path: &Path) -> Option<SystemTime> {
+-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+-}
+-
+ /// The stable per-output key: the `wl_output`'s protocol object id.
+ ///
+ /// Available in both `new_output` and `output_destroyed` (unlike the output's
+@@ -1313,7 +1280,7 @@ fn set_tray_command_position(command: &mut Command, origin: (i32, i32), local: (
+ /// only when their module is configured. The volume source uses a dedicated OS
+ /// thread (PipeWire's main loop is synchronous). The clock is driven by the
+ /// synchronous tick timer. When `config_path` is set, the file is polled for
+-/// mtime changes and the bar hot-reloads theme/layout (producers keep their
++/// app/theme file changes and the bar hot-reloads theme/layout (producers keep their
+ /// original set until restart). See [`run_with_producers`] for a custom set.
+ pub fn run(config: Config, config_path: Option<PathBuf>) -> Result<(), Box<dyn Error>> {
+     let mut producers: Vec<Box<dyn Producer>> = vec![Box::new(HyprlandProducer::new())];
+@@ -1386,7 +1353,7 @@ fn power_profiles_settings(config: &Config) -> PowerProfilesSettings {
+ /// their layer surfaces before producers start. Later outputs still arrive
+ /// through [`OutputHandler::new_output`], and `output_destroyed` tears each down,
+ /// so plugging or unplugging a monitor adds or removes its bar without restarting
+-/// the loop. `config_path` enables mtime-based hot-reload of the TOML config.
++/// the loop. `config_path` enables hot-reload of the TOML config and selected theme.
+ pub fn run_with_producers(
+     config: Config,
+     producers: Vec<Box<dyn Producer>>,
+@@ -1394,7 +1361,7 @@ pub fn run_with_producers(
+ ) -> Result<(), Box<dyn Error>> {
+     let power_settings = power_profiles_settings(&config);
+     let height = config.height;
+-    let config_mtime = config_path.as_ref().and_then(|p| file_mtime(p));
++    let config_watcher = config_path.map(|path| config_reload::ConfigWatcher::new(path, &config));
+     let fonts = shared_fonts();
+ 
+     let conn = Connection::connect_to_env()?;
+@@ -1430,10 +1397,7 @@ pub fn run_with_producers(
+         pending_tray_menu: None,
+         tray_menu: None,
+         fonts,
+-        config_path,
+-        config_mtime,
+-        config_pending_mtime: None,
+-        config_pending_at: None,
++        config_watcher,
+         producer_snapshot: ProducerSnapshot::default(),
+         exit: false,
+     };
+@@ -1458,9 +1422,9 @@ pub fn run_with_producers(
+         TimeoutAction::ToDuration(Duration::from_millis(millis_until_next_minute()))
+     })?;
+ 
+-    // Poll the config file mtime about twice a second so theme/layout edits
++    // Poll app/theme metadata about twice a second so theme/layout edits
+     // apply without restarting. Cheap when the path is unset (no-op).
+-    if app.config_path.is_some() {
++    if app.config_watcher.is_some() {
+         let reload = Timer::from_duration(Duration::from_millis(500));
+         handle.insert_source(reload, |_deadline, _, app| {
+             app.poll_config_reload();
+@@ -1990,6 +1954,46 @@ mod scroll_tests {
+     use super::*;
+     use smithay_client_toolkit::seat::pointer::AxisScroll;
+ 
++    #[test]
++    fn theme_reload_replays_latest_producers_into_rebuilt_dashboards() {
++        use crate::widget::{ActiveWindow, Workspaces};
++        let dir = tempfile::tempdir().unwrap();
++        let path = dir.path().join("config.toml");
++        let theme = dir.path().join("theme.toml");
++        std::fs::write(&path, "[appearance]\ntheme_file = 'theme.toml'\n[bar]\nmodules-left = ['workspaces']\nmodules-center = []\nmodules-right = []").unwrap();
++        let text = include_str!("../tests/fixtures/blueprint.toml");
++        std::fs::write(&theme, text).unwrap();
++        let mut snapshot = ProducerSnapshot::default();
++        snapshot.note(&Msg::Workspaces(Workspaces::new([1], 1)));
++        snapshot.note(&Msg::Workspaces(Workspaces::new([3], 3)));
++        for monitor in ["DP-1", "HDMI-A-1"] {
++            snapshot.note(&Msg::ActiveWindow {
++                monitor: monitor.into(),
++                window: Some(ActiveWindow::new("app", monitor)),
++            });
++        }
++        snapshot.note(&Msg::tick_now());
++        snapshot.note(&Msg::TrayMenuUnavailable("stale".into()));
++        assert_eq!(snapshot.as_slice().len(), 3);
++        for accent in ["#80D4FF", "#010203"] {
++            std::fs::write(&theme, text.replace("#80D4FF", accent)).unwrap();
++            let config = Config::load_for_reload(&path).unwrap();
++            let mut dashboard = config.build_dashboard(Bounds::new(0, 0, 200, 32), None);
++            replay_snapshot(&mut dashboard, snapshot.as_slice());
++            let mut ctx = RenderContext::with_settings(200, 32, config.render_settings());
++            dashboard.layout(&mut ctx, 200, 32);
++            assert_eq!(
++                dashboard.on_click(10, 16, ClickButton::Left),
++                Some(Command::SwitchWorkspace(3))
++            );
++            assert_eq!(snapshot.as_slice().len(), 3);
++            assert_eq!(
++                popup_background(config.render_settings().background),
++                (16, 37, 63, 255)
++            );
++        }
++    }
++
+     #[test]
+     fn wheel_steps_map_up_to_increase_and_down_to_decrease() {
+         let mut remainder = 0.0;
+diff --git a/crates/tablero/tests/blueprint_config.rs b/crates/tablero/tests/blueprint_config.rs
+new file mode 100644
+index 0000000..2f1bd88
+--- /dev/null
++++ b/crates/tablero/tests/blueprint_config.rs
+@@ -0,0 +1,149 @@
++use std::fs;
++use tablero::config::{Color, Config};
++
++const THEME: &str = include_str!("fixtures/blueprint.toml");
++
++#[test]
++fn theme_only_changes_reach_output_pixels_and_keep_monitor_overrides() {
++    use tablero::render::RenderContext;
++    let dir = tempfile::tempdir().unwrap();
++    let path = dir.path().join("config.toml");
++    let theme = dir.path().join("theme.toml");
++    fs::write(&path, "[appearance]\ntheme_file = 'theme.toml'\n[[monitor]]\nname = 'DP-1'\n[monitor.theme]\nbackground = '#AABBCC'\n").unwrap();
++    for (value, expected) in [("#10253F", [16, 37, 63, 255]), ("#010203", [1, 2, 3, 255])] {
++        fs::write(&theme, THEME.replace("#10253F", value)).unwrap();
++        let config = Config::load_for_reload(&path).unwrap();
++        for name in ["DP-1", "HDMI-A-1", "DP-2"] {
++            let resolved = config.resolve_for_output(Some(name));
++            let mut ctx = RenderContext::with_settings(20, 8, resolved.render_settings());
++            ctx.fill_background();
++            let pixel = if name == "DP-1" {
++                [170, 187, 204, 255]
++            } else {
++                expected
++            };
++            assert_eq!(&ctx.pixels()[..4], &pixel);
++        }
++    }
++}
++
++fn color(value: &str) -> Color {
++    Color::parse_hex(value).unwrap()
++}
++
++#[test]
++fn legacy_documents_match_direct_deserialization() {
++    for text in ["", "height = 30", include_str!("../config.example.toml")] {
++        let legacy: Config = toml::from_str(text).unwrap();
++        assert_eq!(Config::from_toml_str(text).unwrap(), legacy);
++    }
++}
++
++#[test]
++fn theme_is_merged_before_defaults_and_output_specific_overrides() {
++    let dir = tempfile::tempdir().unwrap();
++    fs::write(dir.path().join("theme.toml"), THEME).unwrap();
++    let path = dir.path().join("config.toml");
++    let text = r##"
++[appearance]
++theme_file = "theme.toml"
++[theme]
++foreground = "#eeeeee"
++[bar]
++background = "#01020380"
++[widget.clock]
++foreground = "#040506"
++[widget.battery.warn]
++foreground = "#070809"
++[[monitor]]
++name = "DP-1"
++[monitor.theme]
++accent = "#101112"
++[monitor.font]
++family = "Explicit Font"
++[monitor.widget.clock]
++background = "#131415"
++"##;
++    fs::write(&path, text).unwrap();
++    let config = Config::load_from_path(&path).unwrap();
++    assert_eq!(config.theme.background, color("#10253F"));
++    assert_eq!(config.theme.foreground, color("#eeeeee"));
++    assert_eq!(config.theme.accent, color("#80D4FF"));
++    assert_eq!(config.font.family.as_deref(), Some("DejaVu Sans Mono"));
++    assert_eq!(config.font.size, Config::default().font.size);
++    assert_eq!(config.render_settings().background, (1, 2, 3, 128));
++    for name in ["DP-1", "HDMI-A-1"] {
++        let resolved = config.resolve_for_output(Some(name));
++        assert_eq!(resolved.widget.clock.foreground, Some(color("#040506")));
++        assert_eq!(
++            resolved.widget.battery.warn.foreground,
++            Some(color("#070809"))
++        );
++        assert_eq!(resolved.render_settings().background, (1, 2, 3, 128));
++        if name == "DP-1" {
++            assert_eq!(resolved.theme.accent, color("#101112"));
++            assert_eq!(resolved.font.family.as_deref(), Some("Explicit Font"));
++            assert_eq!(resolved.widget.clock.background, Some(color("#131415")));
++        } else {
++            assert_eq!(resolved.theme.accent, color("#80D4FF"));
++            assert_eq!(resolved.widget.clock.background, None);
++        }
++    }
++    // Explicit old defaults must not be mistaken for absence.
++    let defaults = Config::default();
++    let rgba = |c: Color| {
++        let (r, g, b, a) = c.to_rgba();
++        format!("#{r:02X}{g:02X}{b:02X}{a:02X}")
++    };
++    fs::write(&path, format!("[appearance]\ntheme_file = 'theme.toml'\n[theme]\nbackground = '{}'\nforeground = '{}'\naccent = '{}'\n[font]\nfamily = 'Explicit Font'\n", rgba(defaults.theme.background), rgba(defaults.theme.foreground), rgba(defaults.theme.accent))).unwrap();
++    let explicit = Config::load_from_path(&path).unwrap();
++    assert_eq!(explicit.theme, defaults.theme);
++    assert_eq!(explicit.font.family.as_deref(), Some("Explicit Font"));
++}
++
++#[test]
++fn invalid_selected_theme_and_app_report_source_and_never_default() {
++    let dir = tempfile::tempdir().unwrap();
++    let path = dir.path().join("config.toml");
++    let theme = dir.path().join("theme.toml");
++    fs::write(&path, "[appearance]\ntheme_file = 'theme.toml'").unwrap();
++    for invalid in [
++        None,
++        Some(""),
++        Some("version = 2"),
++        Some("nonsense"),
++        Some("version = 1\nextra = true"),
++    ] {
++        if let Some(text) = invalid {
++            fs::write(&theme, text).unwrap();
++        }
++        let error = Config::load_from_path(&path).unwrap_err().to_string();
++        assert!(error.contains("config.toml"), "{error}");
++        assert!(error.contains("theme.toml"), "{error}");
++    }
++    fs::write(&theme, THEME.replace("#80D4FF", "#notrgb")).unwrap();
++    assert!(
++        Config::load_from_path(&path)
++            .unwrap_err()
++            .to_string()
++            .contains("#RRGGBB")
++    );
++    fs::write(&theme, THEME).unwrap();
++    for text in [
++        "[appearance]\ntheme_file = ''",
++        "[appearance]\ntheme_file = '~user/theme.toml'",
++        "[appearance]\nunknown = true",
++        "height = 0\n[appearance]\ntheme_file = 'theme.toml'",
++        "[appearance]\ntheme_file = 'theme.toml'\n[theme]\nforeground = 'bad'",
++        "[appearance]\ntheme_file = 'theme.toml'\n[font]\nunknown = true",
++    ] {
++        fs::write(&path, text).unwrap();
++        assert!(Config::load_from_path(&path).is_err(), "{text}");
++    }
++    assert!(
++        Config::from_toml_str("[appearance]\ntheme_file = 'theme.toml'")
++            .unwrap_err()
++            .to_string()
++            .contains("config file path")
++    );
++}
+diff --git a/crates/tablero/tests/fixtures/blueprint.toml b/crates/tablero/tests/fixtures/blueprint.toml
+new file mode 100644
+index 0000000..23cdb9f
+--- /dev/null
++++ b/crates/tablero/tests/fixtures/blueprint.toml
+@@ -0,0 +1,10 @@
++version = 1
++[colors]
++background = "#10253F"
++foreground = "#E6F3FF"
++accent = "#80D4FF"
++muted = "#7F9AB5"
++selection_background = "#264C70"
++selection_foreground = "#FFFFFF"
++[font]
++family = "DejaVu Sans Mono"
