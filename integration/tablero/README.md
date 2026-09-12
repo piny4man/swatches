@@ -1,13 +1,13 @@
-# Tablero private Blueprint adapter (NUKE-72)
+# Tablero private Swatches adapter
 
 ## Revisions and private branch
 
 - Public Tablero base: `cd92b4d40c7336d5dd88a826c221dbff44d5f974`, recorded in `base-revision`.
-- Blueprint library/workflow base: `a552fa978dafa50a655a3ecde85d5c38c83e92fd` (merged NUKE-71); no library changes needed.
-- Private review branch: `alberto/nuke-72-integrate-blueprint-themes-into-tablero` in `piny4man/blueprint`.
+- Swatches library/workflow base: `a552fa978dafa50a655a3ecde85d5c38c83e92fd` (merged NUKE-71, when the project was named Blueprint); no library changes needed.
+- Historical private review branch: `alberto/nuke-72-integrate-blueprint-themes-into-tablero` in `piny4man/swatches`.
 - `adapter.patch` includes the manifest, application lockfile, implementation, test source, and fixture. Apply it only to the pinned base. The local dependency points four levels up from `crates/tablero` to this private repo; patched Tablero has `publish = false`.
 
-Use this integration's eventual reviewed Blueprint commit to reproduce its exact patch. The public Tablero repository and its default branch contain no Blueprint dependency. Publication/upstreaming remains a separate decision under [the private strategy](../../docs/private-integration.md).
+Use this integration's reviewed Swatches commit to reproduce its exact patch. The public Tablero repository and its default branch contain no Swatches dependency. Publication/upstreaming remains a separate decision under [the private strategy](../../docs/private-integration.md).
 
 ## Prepare and build
 
@@ -31,10 +31,10 @@ Add to the app's existing `$XDG_CONFIG_HOME/tablero/config.toml` (or `$HOME/.con
 
 ```toml
 [appearance]
-theme_file = "~/dev/blueprint/themes/blueprint.toml"
+theme_file = "~/dev/swatches/themes/swatches.toml"
 ```
 
-Adjust that example to your private checkout. Absolute paths and `~/` are supported; other relative paths resolve against the app config's directory, never the launch directory. No environment-variable or `~user` expansion occurs. Symlink paths are preserved. `config.example.toml` beside this document is a minimal loadout whose relative theme path assumes it remains here; adjust the path when copying it elsewhere.
+Adjust that example to your private checkout. Existing configurations that point to the former `blueprint` checkout or `blueprint.toml` must be updated to the renamed checkout and `swatches.toml`; the adapter does not rewrite paths. Absolute paths and `~/` are supported; other relative paths resolve against the app config's directory, never the launch directory. No environment-variable or `~user` expansion occurs. Symlink paths are preserved. `config.example.toml` beside this document is a minimal loadout whose relative theme path assumes it remains here; adjust the path when copying it elsewhere.
 
 The executable uses the standard config location (there is no `--config` flag). For isolated visual testing, place an opt-in config at `<scratch>/tablero/config.toml` and run `XDG_CONFIG_HOME=<scratch> RUST_LOG=info .work/tablero/target/debug/tablero` in a Wayland session. Avoid running two status bars simultaneously during visual comparison.
 
@@ -42,7 +42,7 @@ Existing explicit colors/font family intentionally mask the shared values. Remov
 
 ## Mapping and precedence
 
-| Blueprint v1 value | Tablero fallback |
+| Swatches v1 value | Tablero fallback |
 | --- | --- |
 | `colors.background` | `theme.background` |
 | `colors.foreground` | `theme.foreground` |
@@ -51,7 +51,7 @@ Existing explicit colors/font family intentionally mask the shared values. Remov
 
 The adapter inserts absent fields into the raw TOML before typed default filling. Precedence remains defaults → shared theme → explicit app theme/font → existing bar/widget/state/monitor specificity. An explicit value equal to the old default is still explicit. Shared RGB becomes opaque Tablero RGB; explicit RGBA overrides keep their alpha. Font size and geometry remain app-owned. Installed font lookup/fallback remains cosmic-text's existing behavior; theme parsing does not verify font installation.
 
-Blueprint's `muted`, `selection_background`, and `selection_foreground` are validated as part of its complete v1 document but have no direct Tablero config targets in this adapter. Existing widget semantic colors (battery tiers/charging/warnings, power profiles, tray attention), workspace contrast calculations, and tray disabled/hover derivations remain application-owned. This is the scoped shared background/foreground/accent/font integration, not a complete semantic-state redesign.
+Swatches' `muted`, `selection_background`, and `selection_foreground` are validated as part of its complete v1 document but have no direct Tablero config targets in this adapter. Existing widget semantic colors (battery tiers/charging/warnings, power profiles, tray attention), workspace contrast calculations, and tray disabled/hover derivations remain application-owned. This is the scoped shared background/foreground/accent/font integration, not a complete semantic-state redesign.
 
 `Config::from_toml_str` continues to work for standalone documents. Theme selection requires `load_from_path`/`load_for_reload`, providing the base directory explicitly instead of using an implicit working directory.
 
@@ -80,7 +80,13 @@ The live review below covers the requested font/scaling/popup/recovery/replay ch
 4. Switch to a missing theme, create it, and confirm recovery. Test an editor's atomic-save workflow and removal of opt-in.
 5. Check workspace/title/volume/tray content remains after reload without waiting for producers to emit again.
 
-## Recorded automated validation — 9 September 2026
+## Rename validation - 12 September 2026
+
+- A fresh checkout at the pinned public SHA accepted the regenerated Swatches patch through `prepare.sh tablero-verify`.
+- The locked Tablero build and full serial test suite passed, including the renamed `swatches_config` integration tests.
+- Clippy across all Tablero targets with warnings denied, formatting, and diff whitespace checks passed.
+
+## Historical automated validation - 9 September 2026
 
 - Fresh public clone at pinned SHA: `git apply --check` and patch application passed via `prepare.sh tablero-verify`.
 - Fresh patched app: `cargo build --offline --locked ... -p tablero` passed.
@@ -123,16 +129,16 @@ This is a coverage improvement; it did not establish a production snapshot bug. 
 
 ### Repeat the one-shot desktop review
 
-From the Blueprint root after preparing the private Tablero checkout:
+From the Swatches root after preparing the private Tablero checkout:
 
 ```sh
-install -m644 integration/tablero/desktop-check.rs .work/tablero/crates/tablero/examples/blueprint_desktop_check.rs
-cargo build --locked --manifest-path .work/tablero/Cargo.toml -p tablero --example blueprint_desktop_check
-RUST_LOG=warn,tablero=debug .work/tablero/target/debug/examples/blueprint_desktop_check /absolute/path/to/review/config.toml eDP-2 DP-5
+install -m644 integration/tablero/desktop-check.rs .work/tablero/crates/tablero/examples/swatches_desktop_check.rs
+cargo build --locked --manifest-path .work/tablero/Cargo.toml -p tablero --example swatches_desktop_check
+RUST_LOG=warn,tablero=debug .work/tablero/target/debug/examples/swatches_desktop_check /absolute/path/to/review/config.toml eDP-2 DP-5
 ```
 
 Substitute the actual connector names. Use an isolated opt-in config with `modules-left = ["workspaces"]`, `modules-center = ["title"]`, and `modules-right = ["volume", "tray", "power"]` in `[bar]`, plus an installed font family in the theme. Edit only the review config/theme while the process runs; stop the review process afterward. The driver is an optional review example, not part of the application adapter patch.
 
 ## Refreshing the private patch
 
-Edit only the ignored patched checkout. Mark any new intended files with `git add -N <paths>` there, then regenerate using `git diff --binary --output=<absolute-blueprint-root>/integration/tablero/adapter.patch` from that checkout. Inspect the complete file inventory, run `git diff --check`, and repeat clean preparation/build verification. Do not change `base-revision` without deliberately rebasing and revalidating the adapter.
+Edit only the ignored patched checkout. Mark any new intended files with `git add -N <paths>` there, then regenerate using `git diff --binary --output=<absolute-swatches-root>/integration/tablero/adapter.patch` from that checkout. Inspect the complete file inventory, run `git diff --check`, and repeat clean preparation/build verification. Do not change `base-revision` without deliberately rebasing and revalidating the adapter.

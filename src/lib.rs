@@ -1,11 +1,11 @@
 //! Shared appearance specifications, with no renderer or global configuration.
 //!
 //! ```
-//! use blueprint_theme::{Theme, AppearancePatch};
-//! let theme = Theme::parse(include_str!("../themes/blueprint.toml"))?;
+//! use swatches::{Theme, AppearancePatch};
+//! let theme = Theme::parse(include_str!("../themes/swatches.toml"))?;
 //! let appearance = theme.appearance().with_overrides(&AppearancePatch::default());
 //! assert_eq!(appearance.background.channels(), [16, 37, 63]);
-//! # Ok::<(), blueprint_theme::Error>(())
+//! # Ok::<(), swatches::Error>(())
 //! ```
 
 use serde::{Deserialize, Deserializer};

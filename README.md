@@ -1,14 +1,14 @@
-# Blueprint
+# Swatches
 
 Shared appearance specifications for independent desktop tools.
 
-**Private foundation, v0.1.0.** Rust package: `blueprint-theme`. Publishing is disabled in Cargo.toml. No registry release has been made.
+**Private foundation, v0.1.0.** Rust package: `swatches`. Publishing is disabled in Cargo.toml. No registry release has been made.
 
-Blueprint defines six semantic RGB colors and a font family in one versioned TOML file. Tablero, Hyprburst and Crabture will consume these through application-specific adapters. Those integrations are not included yet.
+Swatches defines six semantic RGB colors and a font family in one versioned TOML file. Tablero consumes these through a private application-specific adapter; Hyprburst and Crabture integrations remain follow-up work.
 
 ## Theme
 
-See [themes/blueprint.toml](themes/blueprint.toml) for a blue technical-drawing-inspired example. It is an optional example, not a forced palette.
+See [themes/swatches.toml](themes/swatches.toml) for an example. It is optional, not a forced palette.
 
 ```toml
 version = 1
@@ -25,7 +25,7 @@ selection_foreground = "#FFFFFF"
 family = "JetBrainsMono Nerd Font Mono"
 ```
 
-Every field is required. Colors are `#RRGGBB`, case insensitive. Unknown keys, duplicate keys, unsupported versions, malformed colors and empty/control-containing font names are errors. Font family is trimmed. Blueprint validates the name, not font installation or glyph coverage.
+Every field is required. Colors are `#RRGGBB`, case insensitive. Unknown keys, duplicate keys, unsupported versions, malformed colors and empty/control-containing font names are errors. Font family is trimmed. Swatches validates the name, not font installation or glyph coverage.
 
 No colors are derived automatically. Selection foreground/background are explicit so all adapters receive the same design choice. Contrast must be reviewed when designing a theme.
 
@@ -35,14 +35,14 @@ Use a local path dependency while this project is private and unpublished:
 
 ```toml
 [dependencies]
-blueprint = { package = "blueprint-theme", path = "../blueprint" }
+swatches = { path = "../swatches" }
 ```
 
 ```rust,no_run
-use blueprint::{Theme, AppearancePatch};
+use swatches::{Theme, AppearancePatch};
 
-fn main() -> Result<(), blueprint::Error> {
-    let theme = Theme::load("/home/me/.config/blueprint/theme.toml")?;
+fn main() -> Result<(), swatches::Error> {
+    let theme = Theme::load("/home/me/.config/swatches/theme.toml")?;
     let app_overrides = AppearancePatch::default();
     let appearance = theme.appearance().with_overrides(&app_overrides);
     let [r, g, b] = appearance.accent.channels();
@@ -60,10 +60,12 @@ Proposed app config (adapters must implement this):
 
 ```toml
 [appearance]
-theme_file = "../blueprint/theme.toml"
+theme_file = "../swatches/theme.toml"
 ```
 
 `resolve_theme_path` takes the configured string, absolute app configuration directory and optional absolute home directory. Relative paths resolve against that config directory. `~/` is supported; variables and `~user` are not expanded. Paths are not canonicalized, so watches can follow the configured symlink path. This helper is not a filesystem sandbox.
+
+Existing `appearance.theme_file` values are not rewritten automatically. After renaming an existing checkout or theme file, update the configured path from the old `blueprint` checkout or `blueprint.toml` filename to the corresponding `swatches` path. Absolute, `~/`, and config-relative values keep the same resolution semantics.
 
 `Theme::load` is read-only and returns errors containing the path. TOML diagnostics include field/context and source location where available. Missing files are errors; opt-out is represented by not calling load. The library does not silently choose defaults or modify application configuration.
 
