@@ -2,12 +2,26 @@
 name = "swatches"
 version = "0.1.0"
 edition = "2021"
-description = "Renderer-independent shared appearance specifications for desktop tools"
-publish = false
+rust-version = "1.85"
+description = "Strict, renderer-independent appearance themes for Rust applications"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/piny4man/swatches"
+homepage = "https://github.com/piny4man/swatches"
+documentation = "https://docs.rs/swatches"
+readme = "README.md"
+keywords = ["theme", "color", "configuration", "appearance", "palette"]
+categories = ["config", "graphics", "parser-implementations"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/examples/**",
+    "/themes/swatches.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
-
-[dev-dependencies]
-tempfile = "3"

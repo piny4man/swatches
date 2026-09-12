@@ -1,4 +1,6 @@
-//! Shared appearance specifications, with no renderer or global configuration.
+#![warn(missing_docs)]
+
+//! Strict appearance themes with no renderer or global configuration.
 //!
 //! ```
 //! use swatches::{Theme, AppearancePatch};
@@ -20,9 +22,14 @@ use std::{
 pub struct Rgb([u8; 3]);
 
 impl Rgb {
+    /// Creates a color from red, green, and blue channels.
+    #[must_use]
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self([r, g, b])
     }
+
+    /// Returns the red, green, and blue channels.
+    #[must_use]
     pub const fn channels(self) -> [u8; 3] {
         self.0
     }
@@ -66,6 +73,8 @@ impl<'de> Deserialize<'de> for Rgb {
 pub struct FontFamily(String);
 
 impl FontFamily {
+    /// Returns the normalized family name.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -89,20 +98,29 @@ impl<'de> Deserialize<'de> for FontFamily {
     }
 }
 
+/// The six semantic colors required by a theme.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Colors {
+    /// The primary surface color.
     pub background: Rgb,
+    /// The primary content color.
     pub foreground: Rgb,
+    /// The emphasis color.
     pub accent: Rgb,
+    /// The secondary content color.
     pub muted: Rgb,
+    /// The selected surface color.
     pub selection_background: Rgb,
+    /// The content color on a selected surface.
     pub selection_foreground: Rgb,
 }
 
+/// The font settings required by a theme.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Font {
+    /// The preferred font family.
     pub family: FontFamily,
 }
 
@@ -122,6 +140,7 @@ struct Document {
 }
 
 impl Theme {
+    /// Parses and validates a complete version-1 TOML theme.
     pub fn parse(text: &str) -> Result<Self, Error> {
         let doc: Document = toml::from_str(text).map_err(Error::parse)?;
         if doc.version != 1 {
@@ -147,12 +166,21 @@ impl Theme {
             error
         })
     }
+
+    /// Returns the theme's semantic colors.
+    #[must_use]
     pub fn colors(&self) -> &Colors {
         &self.colors
     }
+
+    /// Returns the theme's font settings.
+    #[must_use]
     pub fn font(&self) -> &Font {
         &self.font
     }
+
+    /// Converts the complete theme into resolved appearance values.
+    #[must_use]
     pub fn appearance(&self) -> Appearance {
         Appearance {
             background: self.colors.background,
@@ -169,28 +197,44 @@ impl Theme {
 /// Renderer-independent resolved values. Apps provide their own defaults.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Appearance {
+    /// The primary surface color.
     pub background: Rgb,
+    /// The primary content color.
     pub foreground: Rgb,
+    /// The emphasis color.
     pub accent: Rgb,
+    /// The secondary content color.
     pub muted: Rgb,
+    /// The selected surface color.
     pub selection_background: Rgb,
+    /// The content color on a selected surface.
     pub selection_foreground: Rgb,
+    /// The preferred font family.
     pub font_family: FontFamily,
 }
 
 /// Explicit app values only. Do not default-fill app config before mapping it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppearancePatch {
+    /// An explicit primary surface color.
     pub background: Option<Rgb>,
+    /// An explicit primary content color.
     pub foreground: Option<Rgb>,
+    /// An explicit emphasis color.
     pub accent: Option<Rgb>,
+    /// An explicit secondary content color.
     pub muted: Option<Rgb>,
+    /// An explicit selected surface color.
     pub selection_background: Option<Rgb>,
+    /// An explicit selected-surface content color.
     pub selection_foreground: Option<Rgb>,
+    /// An explicit preferred font family.
     pub font_family: Option<FontFamily>,
 }
 
 impl Appearance {
+    /// Applies every field present in `patch` and returns the result.
+    #[must_use]
     pub fn with_overrides(mut self, patch: &AppearancePatch) -> Self {
         macro_rules! apply { ($($field:ident),+) => { $(if let Some(value) = patch.$field { self.$field = value; })+ }; }
         apply!(
@@ -208,7 +252,8 @@ impl Appearance {
     }
 }
 
-/// App defaults → optional complete shared theme → explicit app fields.
+/// Resolves application defaults, then an optional complete theme, then explicit fields.
+#[must_use]
 pub fn resolve(
     defaults: &Appearance,
     theme: Option<&Theme>,
@@ -232,7 +277,7 @@ pub fn resolve_theme_path(
 ) -> Result<PathBuf, Error> {
     if value.trim().is_empty() || value.chars().any(char::is_control) {
         return Err(Error::invalid(
-            "appearance.theme_file must be a nonempty path without control characters",
+            "theme path must be nonempty and contain no control characters",
         ));
     }
     if !config_dir.is_absolute() {
@@ -258,6 +303,7 @@ pub fn resolve_theme_path(
     })
 }
 
+/// An error produced while resolving, reading, or parsing a theme.
 #[derive(Debug)]
 pub struct Error {
     path: Option<PathBuf>,
@@ -282,6 +328,8 @@ impl Error {
             kind: ErrorKind::Invalid(message.into()),
         }
     }
+    /// Returns the source path for errors produced by [`Theme::load`].
+    #[must_use]
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
