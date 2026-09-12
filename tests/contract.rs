@@ -1,7 +1,27 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use swatches::{resolve, resolve_theme_path, AppearancePatch, FontFamily, Rgb, Theme};
 
 const EXAMPLE: &str = include_str!("../themes/swatches.toml");
+
+struct TestDir(PathBuf);
+
+impl TestDir {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("swatches-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
 
 #[test]
 fn example_has_explicit_semantic_roles() {
@@ -47,8 +67,8 @@ fn strict_rgb_handles_unicode_without_panicking() {
 
 #[test]
 fn invalid_color_reports_field_and_source_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("theme.toml");
+    let dir = TestDir::new("invalid-color");
+    let path = dir.0.join("theme.toml");
     fs::write(&path, EXAMPLE.replace("#80D4FF", "#bad")).unwrap();
     let error = Theme::load(&path).unwrap_err();
     assert_eq!(error.path(), Some(path.as_path()));
@@ -149,9 +169,18 @@ fn paths_are_relative_to_config_not_cwd() {
 }
 
 #[test]
+fn path_errors_use_library_level_language() {
+    let error = resolve_theme_path("", Path::new("/config"), None).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "theme path must be nonempty and contain no control characters"
+    );
+}
+
+#[test]
 fn load_is_read_only_and_failed_reload_can_keep_previous_theme() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("theme.toml");
+    let dir = TestDir::new("reload");
+    let path = dir.0.join("theme.toml");
     assert!(Theme::load(&path).is_err());
     assert!(!path.exists());
     fs::write(&path, EXAMPLE).unwrap();

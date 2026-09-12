@@ -1,14 +1,21 @@
 # Swatches
 
-Shared appearance specifications for independent desktop tools.
+Swatches is a small, renderer-independent Rust library for sharing appearance
+themes between unrelated applications. It parses a strict TOML schema and
+resolves values with explicit precedence; rendering, global configuration, and
+reload orchestration remain application concerns.
 
-**Private foundation, v0.1.0.** Rust package: `swatches`. Publishing is disabled in Cargo.toml. No registry release has been made.
+## Installation
 
-Swatches defines six semantic RGB colors and a font family in one versioned TOML file. Tablero consumes these through a private application-specific adapter; Hyprburst and Crabture integrations remain follow-up work.
+Add the library dependency, not a binary:
 
-## Theme
+```sh
+cargo add swatches
+```
 
-See [themes/swatches.toml](themes/swatches.toml) for an example. It is optional, not a forced palette.
+Swatches requires Rust 1.85 or newer.
+
+## Theme format
 
 ```toml
 version = 1
@@ -22,78 +29,73 @@ selection_background = "#244A70"
 selection_foreground = "#FFFFFF"
 
 [font]
-family = "JetBrainsMono Nerd Font Mono"
+family = "Example Sans"
 ```
 
-Every field is required. Colors are `#RRGGBB`, case insensitive. Unknown keys, duplicate keys, unsupported versions, malformed colors and empty/control-containing font names are errors. Font family is trimmed. Swatches validates the name, not font installation or glyph coverage.
+Every field is required. Colors use case-insensitive `#RRGGBB` notation.
+Unknown or duplicate keys, unsupported versions, malformed colors, and empty
+or control-containing font names are errors. Font family whitespace is trimmed.
+Swatches validates a family name but does not discover installed fonts or check
+glyph coverage.
 
-No colors are derived automatically. Selection foreground/background are explicit so all adapters receive the same design choice. Contrast must be reviewed when designing a theme.
+## Usage
 
-## Rust API
+```rust
+use swatches::{resolve, Appearance, AppearancePatch, FontFamily, Rgb, Theme};
 
-Use a local path dependency while this project is private and unpublished:
+fn load_appearance(path: &std::path::Path) -> Result<Appearance, swatches::Error> {
+    let defaults = Appearance {
+        background: Rgb::new(255, 255, 255),
+        foreground: Rgb::new(20, 20, 20),
+        accent: Rgb::new(0, 100, 220),
+        muted: Rgb::new(100, 100, 100),
+        selection_background: Rgb::new(0, 100, 220),
+        selection_foreground: Rgb::new(255, 255, 255),
+        font_family: "Example Sans".parse::<FontFamily>().expect("valid default"),
+    };
 
-```toml
-[dependencies]
-swatches = { path = "../swatches" }
-```
-
-```rust,no_run
-use swatches::{Theme, AppearancePatch};
-
-fn main() -> Result<(), swatches::Error> {
-    let theme = Theme::load("/home/me/.config/swatches/theme.toml")?;
-    let app_overrides = AppearancePatch::default();
-    let appearance = theme.appearance().with_overrides(&app_overrides);
-    let [r, g, b] = appearance.accent.channels();
-    Ok(())
+    let theme = Theme::load(path)?;
+    Ok(resolve(&defaults, Some(&theme), &AppearancePatch::default()))
 }
 ```
 
-`resolve(&app_defaults, optional_theme, &explicit_overrides)` preserves application defaults when no theme is selected. A complete theme replaces the seven shared roles; explicit app values are applied last, including values equal to the old defaults. There is intentionally no global Default appearance.
+The complete example in [`examples/basic.rs`](examples/basic.rs) accepts a
+theme path and prints values suitable for passing to any renderer.
 
-Apps whose native appearance is richer or has unspecified font defaults may instead consume `Theme::colors()` and `Theme::font()` directly, applying shared fallbacks before resolving their own raw optional fields. Never coerce an app's absent system font into a made-up family merely to use the helper.
+Resolution order is deterministic:
 
-## Paths and loading
+1. Application-owned defaults are the base.
+2. A selected complete theme replaces all shared roles.
+3. Explicit application fields replace matching theme values.
 
-Proposed app config (adapters must implement this):
+There is deliberately no global `Default` appearance. Applications with richer
+models can consume `Theme::colors()` and `Theme::font()` directly instead.
+Application adapters, configuration, and documentation belong in those
+applications, not in this repository.
 
-```toml
-[appearance]
-theme_file = "../swatches/theme.toml"
-```
+## Application responsibilities
 
-`resolve_theme_path` takes the configured string, absolute app configuration directory and optional absolute home directory. Relative paths resolve against that config directory. `~/` is supported; variables and `~user` are not expanded. Paths are not canonicalized, so watches can follow the configured symlink path. This helper is not a filesystem sandbox.
+- Error handling: `Theme::load` reports I/O and TOML errors and associates them
+  with the source path. Applications decide whether startup fails, defaults are
+  used, or a previously valid theme remains active.
+- Reloading: Swatches reads only when called. File watching, debounce behavior,
+  and reload policy belong to the application.
+- Fonts: The schema stores a family, not a font size, weight, file, fallback
+  chain, or installed-font resolution policy.
+- Alpha and geometry: Colors are opaque sRGB values. Opacity, spacing, radius,
+  dimensions, animation, and layout stay under application control.
+- Paths: `resolve_theme_path` resolves absolute, configuration-relative, and
+  `~/` paths without environment-variable expansion or canonicalization. It is
+  a convenience helper, not a filesystem sandbox.
 
-Existing `appearance.theme_file` values are not rewritten automatically. After renaming an existing checkout or theme file, update the configured path from the old `blueprint` checkout or `blueprint.toml` filename to the corresponding `swatches` path. Absolute, `~/`, and config-relative values keep the same resolution semantics.
+## Compatibility
 
-`Theme::load` is read-only and returns errors containing the path. TOML diagnostics include field/context and source location where available. Missing files are errors; opt-out is represented by not calling load. The library does not silently choose defaults or modify application configuration.
+The crate version and TOML schema version are independent. Swatches `0.1.0`
+supports only `version = 1` documents and rejects other schema versions rather
+than guessing. Before crate 1.0, Rust API changes may occur in minor releases;
+schema changes still require an explicit document version and migration notes.
 
-Tablero should keep the previous resolved config when reload fails. Hyprburst and Crabture should load once at opening initially. Their adapters choose startup fallback behavior and diagnostics. No file watcher, daemon, environment mutation, font discovery or renderer is included.
+## License
 
-## Adapter plan
-
-| Token | Tablero | Hyprburst | Crabture |
-|---|---|---|---|
-| background/foreground | Global theme fallback | Default GUI colors | Panel/text colors, retain role alpha |
-| accent | Widget emphasis fallback | Prompt/banner | Active controls and selection highlight |
-| muted | Future secondary-text role | Empty-state text | Secondary toolbar labels |
-| selection colors | Where a native selected surface exists | Selected row | Applicable active/selected controls |
-| font family | Existing family setting | New family resolver after explicit path/environment | New resolver with bundled fallback |
-
-An adapter may leave a role unused where no corresponding surface exists. Preserve explicit native overrides, Tablero monitor/widget specificity, and each app's geometry, alpha and font sizes. Do not apply shared opacity to captured screenshot pixels.
-
-Crabture layout measurement, paint and hit-testing must use the same resolved font. Hyprburst's Rio parent and TUI child must resolve the same theme; terminal fallback fonts remain terminal-owned. Tablero must watch both app and theme paths.
-
-## Development
-
-See [Private integration strategy](docs/private-integration.md) for the private
-patch workflow and the independent consumer that proves local path builds.
-
-```sh
-cargo fmt --check
-cargo test --locked
-cargo clippy --all-targets --locked -- -D warnings
-```
-
-See [docs/review.md](docs/review.md) for scope and review notes. Application integration and laptop measurements remain future work. No distribution license has been chosen while this repository is private.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or the
+[MIT license](LICENSE-MIT), at your option.
