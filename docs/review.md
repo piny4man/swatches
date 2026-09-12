@@ -1,8 +1,8 @@
 # NUKE-70 review
 
-The existing desktop tools express appearance differently. Blueprint provides a stable input contract without coupling their renderers or overriding their standalone defaults.
+The existing desktop tools express appearance differently. Swatches provides a stable input contract without coupling their renderers or overriding their standalone defaults.
 
-This foundation includes complete version-1 themes, strict RGB/font parsing, source-aware file errors, a typed explicit-override helper, deterministic path resolution, an example theme, and contract tests. Publication is disabled.
+This foundation includes complete version-1 themes, strict RGB/font parsing, source-aware file errors, a typed explicit-override helper, deterministic path resolution, an example theme, and contract tests. Publication is disabled. This NUKE-70 record predates the rename from Blueprint to Swatches.
 
 Intentional changes from the initial audit proposal: the schema uses `version = 1` as agreed in the subsequent design discussion; muted and selection colors are explicit rather than derived. Font size, geometry, alpha and motion are deferred.
 

@@ -1,5 +1,5 @@
 [package]
-name = "blueprint-private-consumer"
+name = "swatches-private-consumer"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -8,4 +8,4 @@ publish = false
 [workspace]
 
 [dependencies]
-blueprint = { package = "blueprint-theme", path = "../.." }
+swatches = { path = "../.." }

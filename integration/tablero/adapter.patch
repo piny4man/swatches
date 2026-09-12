@@ -1,13 +1,13 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 45b865f..b246757 100644
+index 45b865f..e5eb7a3 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -131,6 +131,14 @@ version = "2.13.0"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
+@@ -1348,6 +1348,14 @@ dependencies = [
+  "zeno",
+ ]
  
 +[[package]]
-+name = "blueprint-theme"
++name = "swatches"
 +version = "0.1.0"
 +dependencies = [
 + "serde",
@@ -15,18 +15,18 @@ index 45b865f..b246757 100644
 +]
 +
  [[package]]
- name = "bumpalo"
- version = "3.20.3"
-@@ -1385,6 +1393,7 @@ dependencies = [
- name = "tablero"
- version = "0.4.0"
- dependencies = [
-+ "blueprint-theme",
-  "calloop",
-  "calloop-wayland-source",
-  "chrono",
+ name = "syn"
+ version = "2.0.118"
+@@ -1399,6 +1407,7 @@ dependencies = [
+  "serde",
+  "serde_json",
+  "smithay-client-toolkit",
++ "swatches",
+  "tempfile",
+  "tiny-skia",
+  "tokio",
 diff --git a/crates/tablero/Cargo.toml b/crates/tablero/Cargo.toml
-index 67d6982..73a6539 100644
+index 67d6982..bc2d35b 100644
 --- a/crates/tablero/Cargo.toml
 +++ b/crates/tablero/Cargo.toml
 @@ -10,10 +10,11 @@ homepage = "https://github.com/piny4man/tablero"
@@ -38,19 +38,19 @@ index 67d6982..73a6539 100644
  include = ["src/**", "tests/**", "examples/**", "config.example.toml", "LICENSE"]
  
  [dependencies]
-+blueprint = { package = "blueprint-theme", path = "../../../.." }
++swatches = { path = "../../../.." }
  # default-features = false drops the regex filter engine, the `jiff` datetime
  # stack, and anstream/anstyle coloring — none of which a plain `env_logger::init()`
  # needs. RUST_LOG level/module filtering still works.
 diff --git a/crates/tablero/src/config.rs b/crates/tablero/src/config.rs
-index 7f689f1..92b83af 100644
+index 7f689f1..35c4916 100644
 --- a/crates/tablero/src/config.rs
 +++ b/crates/tablero/src/config.rs
 @@ -801,6 +801,8 @@ pub struct MonitorConfig {
  #[derive(Debug, Clone, PartialEq, Deserialize)]
  #[serde(default, deny_unknown_fields)]
  pub struct Config {
-+    /// Optional private Blueprint theme, resolved before default filling.
++    /// Optional private Swatches theme, resolved before default filling.
 +    pub appearance: AppearanceConfig,
      /// Bar height in pixels.
      pub height: u32,
@@ -76,7 +76,7 @@ index 7f689f1..92b83af 100644
 +pub(crate) fn resolve_theme_file(value: &str, config_path: &Path) -> Result<PathBuf, String> {
 +    let absolute = std::path::absolute(config_path).map_err(|e| e.to_string())?;
 +    let home = std::env::var_os("HOME").map(PathBuf::from);
-+    blueprint::resolve_theme_path(
++    swatches::resolve_theme_path(
 +        value,
 +        absolute
 +            .parent()
@@ -93,7 +93,7 @@ index 7f689f1..92b83af 100644
      ///
      /// Missing fields fall back to their documented defaults; unknown keys,
      /// unknown widget names, and malformed colors are reported as errors.
-+    /// A selected Blueprint theme requires [`Self::load_from_path`] so relative
++    /// A selected Swatches theme requires [`Self::load_from_path`] so relative
 +    /// paths have an explicit config-directory base.
      pub fn from_toml_str(toml: &str) -> Result<Config, ConfigError> {
 -        let config: Config =
@@ -142,7 +142,7 @@ index 7f689f1..92b83af 100644
 +            })?;
 +            let theme_path = resolve_theme_file(value, path).map_err(&invalid)?;
 +            let theme =
-+                blueprint::Theme::load(theme_path).map_err(|error| invalid(error.to_string()))?;
++                swatches::Theme::load(theme_path).map_err(|error| invalid(error.to_string()))?;
 +            // Insert only absent keys in the raw document. Explicit values,
 +            // including old defaults and RGBA overrides, remain authoritative.
 +            for (table, key, value) in [
@@ -169,7 +169,7 @@ index 7f689f1..92b83af 100644
          Ok(config)
 diff --git a/crates/tablero/src/config_reload.rs b/crates/tablero/src/config_reload.rs
 new file mode 100644
-index 0000000..7a713bf
+index 0000000..315ad23
 --- /dev/null
 +++ b/crates/tablero/src/config_reload.rs
 @@ -0,0 +1,260 @@
@@ -317,7 +317,7 @@ index 0000000..7a713bf
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
-+    const THEME: &str = include_str!("../tests/fixtures/blueprint.toml");
++    const THEME: &str = include_str!("../tests/fixtures/swatches.toml");
 +
 +    fn settled(watcher: &mut ConfigWatcher, now: &mut Instant) -> Result<Config, ConfigError> {
 +        *now += Duration::from_secs(1);
@@ -434,7 +434,7 @@ index 0000000..7a713bf
 +    }
 +}
 diff --git a/crates/tablero/src/lib.rs b/crates/tablero/src/lib.rs
-index 26162b0..256a60a 100644
+index 26162b0..a9ea856 100644
 --- a/crates/tablero/src/lib.rs
 +++ b/crates/tablero/src/lib.rs
 @@ -17,6 +17,7 @@
@@ -631,7 +631,7 @@ index 26162b0..256a60a 100644
 +        let path = dir.path().join("config.toml");
 +        let theme = dir.path().join("theme.toml");
 +        std::fs::write(&path, "[appearance]\ntheme_file = 'theme.toml'\n[bar]\nmodules-left = ['workspaces']\nmodules-center = ['title']\nmodules-right = ['volume']").unwrap();
-+        let text = include_str!("../tests/fixtures/blueprint.toml");
++        let text = include_str!("../tests/fixtures/swatches.toml");
 +        std::fs::write(&theme, text).unwrap();
 +        let mut snapshot = ProducerSnapshot::default();
 +        snapshot.note(&Msg::Workspaces(Workspaces::new([1], 1)));
@@ -733,16 +733,32 @@ index 26162b0..256a60a 100644
      #[test]
      fn wheel_steps_map_up_to_increase_and_down_to_decrease() {
          let mut remainder = 0.0;
-diff --git a/crates/tablero/tests/blueprint_config.rs b/crates/tablero/tests/blueprint_config.rs
+diff --git a/crates/tablero/tests/fixtures/swatches.toml b/crates/tablero/tests/fixtures/swatches.toml
 new file mode 100644
-index 0000000..2f1bd88
+index 0000000..23cdb9f
 --- /dev/null
-+++ b/crates/tablero/tests/blueprint_config.rs
++++ b/crates/tablero/tests/fixtures/swatches.toml
+@@ -0,0 +1,10 @@
++version = 1
++[colors]
++background = "#10253F"
++foreground = "#E6F3FF"
++accent = "#80D4FF"
++muted = "#7F9AB5"
++selection_background = "#264C70"
++selection_foreground = "#FFFFFF"
++[font]
++family = "DejaVu Sans Mono"
+diff --git a/crates/tablero/tests/swatches_config.rs b/crates/tablero/tests/swatches_config.rs
+new file mode 100644
+index 0000000..8ed6cd4
+--- /dev/null
++++ b/crates/tablero/tests/swatches_config.rs
 @@ -0,0 +1,149 @@
 +use std::fs;
 +use tablero::config::{Color, Config};
 +
-+const THEME: &str = include_str!("fixtures/blueprint.toml");
++const THEME: &str = include_str!("fixtures/swatches.toml");
 +
 +#[test]
 +fn theme_only_changes_reach_output_pixels_and_keep_monitor_overrides() {
@@ -888,19 +904,3 @@ index 0000000..2f1bd88
 +            .contains("config file path")
 +    );
 +}
-diff --git a/crates/tablero/tests/fixtures/blueprint.toml b/crates/tablero/tests/fixtures/blueprint.toml
-new file mode 100644
-index 0000000..23cdb9f
---- /dev/null
-+++ b/crates/tablero/tests/fixtures/blueprint.toml
-@@ -0,0 +1,10 @@
-+version = 1
-+[colors]
-+background = "#10253F"
-+foreground = "#E6F3FF"
-+accent = "#80D4FF"
-+muted = "#7F9AB5"
-+selection_background = "#264C70"
-+selection_foreground = "#FFFFFF"
-+[font]
-+family = "DejaVu Sans Mono"

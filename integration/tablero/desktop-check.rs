@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             tx.send(Msg::ActiveWindow {
                 window: Some(ActiveWindow::new(
                     "review",
-                    format!("NUKE-72 {monitor}: restored title"),
+                    format!("Swatches {monitor}: restored title"),
                 )),
                 monitor,
             })?;

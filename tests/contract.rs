@@ -1,7 +1,7 @@
-use blueprint_theme::{resolve, resolve_theme_path, AppearancePatch, FontFamily, Rgb, Theme};
 use std::{fs, path::Path};
+use swatches::{resolve, resolve_theme_path, AppearancePatch, FontFamily, Rgb, Theme};
 
-const EXAMPLE: &str = include_str!("../themes/blueprint.toml");
+const EXAMPLE: &str = include_str!("../themes/swatches.toml");
 
 #[test]
 fn example_has_explicit_semantic_roles() {
@@ -128,8 +128,8 @@ fn every_override_is_applied_independently() {
 fn paths_are_relative_to_config_not_cwd() {
     let config = Path::new("/home/test/.config/tablero");
     assert_eq!(
-        resolve_theme_path("../blueprint/theme.toml", config, None).unwrap(),
-        config.join("../blueprint/theme.toml")
+        resolve_theme_path("../swatches/theme.toml", config, None).unwrap(),
+        config.join("../swatches/theme.toml")
     );
     assert_eq!(
         resolve_theme_path("/themes/a.toml", config, None).unwrap(),

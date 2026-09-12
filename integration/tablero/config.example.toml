@@ -1,6 +1,6 @@
 # For the private NUKE-72 adapter only. Relative to this file's directory.
 [appearance]
-theme_file = "../../themes/blueprint.toml"
+theme_file = "../../themes/swatches.toml"
 
 # Font size, geometry, producer selection, and state overrides remain app-owned.
 [font]

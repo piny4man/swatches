@@ -1,7 +1,7 @@
-use blueprint::{resolve, AppearancePatch, Rgb, Theme};
+use swatches::{resolve, AppearancePatch, Rgb, Theme};
 
-fn main() -> Result<(), blueprint::Error> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../themes/blueprint.toml");
+fn main() -> Result<(), swatches::Error> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../themes/swatches.toml");
     let theme = Theme::load(path)?;
     // In an adapter, these defaults come from the host application.
     let mut defaults = theme.appearance();
