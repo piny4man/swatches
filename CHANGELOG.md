@@ -2,7 +2,7 @@
 
 All notable changes to Swatches are documented in this file.
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-09-13
 
 - Define and strictly parse version-1 TOML themes with six semantic RGB colors
   and a font family.
