@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 cargo fmt --check
 cargo test --locked --all-targets
+cargo test --doc --locked
 cargo clippy --locked --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps
 
@@ -60,6 +61,6 @@ fn main() -> Result<(), swatches::Error> {
     Ok(())
 }
 EOF
-CARGO_TARGET_DIR="$work_dir/target" cargo check --manifest-path "$work_dir/consumer/Cargo.toml"
+CARGO_TARGET_DIR="$work_dir/target" cargo run --manifest-path "$work_dir/consumer/Cargo.toml"
 
 cargo publish --allow-dirty --locked --dry-run
